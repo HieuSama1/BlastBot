@@ -1,7 +1,7 @@
 """Embed templates và helpers"""
 
 import discord
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from .constants import COLORS, EMOJIS, BOT_INFO
 
@@ -23,7 +23,7 @@ def create_embed(
         title=title,
         description=description,
         color=color,
-        timestamp=datetime.utcnow() if timestamp else None
+        timestamp=datetime.now(timezone.utc) if timestamp else None
     )
     
     if thumbnail:

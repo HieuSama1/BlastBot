@@ -36,7 +36,7 @@ class ConfirmView(discord.ui.View):
     
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Chỉ cho phép user đã gọi command tương tác"""
-        if interaction.user != self.user:
+        if interaction.user.id != self.user.id:
             await interaction.response.send_message(
                 "Bạn không thể sử dụng nút này!",
                 ephemeral=True
@@ -185,7 +185,8 @@ class RoleSelectMenu(discord.ui.Select):
         roles: List[discord.Role],
         placeholder: str = "Chọn roles...",
         min_values: int = 0,
-        max_values: int = 1
+        max_values: int = 1,
+        custom_id: str = "role_select_menu"
     ):
         options = [
             discord.SelectOption(
@@ -201,7 +202,8 @@ class RoleSelectMenu(discord.ui.Select):
             placeholder=placeholder,
             min_values=min_values,
             max_values=min(max_values, len(options)),
-            options=options
+            options=options,
+            custom_id=custom_id
         )
         
         # Add lock to prevent race conditions
@@ -222,8 +224,10 @@ class RoleSelectMenu(discord.ui.Select):
             self._processing = True
             
             try:
+                await interaction.response.defer(ephemeral=True)
+
                 if not isinstance(interaction.user, discord.Member):
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "❌ Lỗi: Không thể xác định member!",
                         ephemeral=True
                     )
@@ -250,31 +254,32 @@ class RoleSelectMenu(discord.ui.Select):
         
         # Get menu role IDs for validation
         menu_role_ids = {int(opt.value) for opt in self.options}
-        
-        for role in guild.roles:
-            if role.id in selected_role_ids:
-                if role not in interaction.user.roles:
-                    try:
-                        await interaction.user.add_roles(role, reason="Role menu selection")
-                        added_roles.append(role.mention)
-                    except discord.Forbidden:
-                        errors.append(f"Không thể thêm {role.mention}")
-                    except discord.HTTPException as e:
-                        errors.append(f"Lỗi khi thêm {role.mention}: {str(e)[:50]}")
-            else:
-                # Remove role nếu user có nhưng không chọn
-                if role.id in [r.id for r in interaction.user.roles] and role.id in menu_role_ids:
-                    try:
-                        await interaction.user.remove_roles(role, reason="Role menu deselection")
-                        removed_roles.append(role.mention)
-                    except discord.Forbidden:
-                        errors.append(f"Không thể xóa {role.mention}")
-                    except discord.HTTPException as e:
-                        errors.append(f"Lỗi khi xóa {role.mention}: {str(e)[:50]}")
-        
-        # Small delay to prevent race conditions
-        from utils.constants import ROLE_MENU_CONFIG
-        await asyncio.sleep(ROLE_MENU_CONFIG['processing_delay_seconds'])
+        current_role_ids = {role.id for role in interaction.user.roles}
+
+        for role_id in menu_role_ids:
+            role = guild.get_role(role_id)
+            if not role:
+                continue
+
+            should_have_role = role_id in selected_role_ids
+            has_role = role_id in current_role_ids
+
+            if should_have_role and not has_role:
+                try:
+                    await interaction.user.add_roles(role, reason="Role menu selection")
+                    added_roles.append(role.mention)
+                except discord.Forbidden:
+                    errors.append(f"Không thể thêm {role.mention}")
+                except discord.HTTPException as e:
+                    errors.append(f"Lỗi khi thêm {role.mention}: {str(e)[:50]}")
+            elif not should_have_role and has_role:
+                try:
+                    await interaction.user.remove_roles(role, reason="Role menu deselection")
+                    removed_roles.append(role.mention)
+                except discord.Forbidden:
+                    errors.append(f"Không thể xóa {role.mention}")
+                except discord.HTTPException as e:
+                    errors.append(f"Lỗi khi xóa {role.mention}: {str(e)[:50]}")
         
         response = []
         if added_roles:
@@ -287,7 +292,7 @@ class RoleSelectMenu(discord.ui.Select):
         if not response:
             response.append("Không có thay đổi nào.")
         
-        await interaction.response.send_message("\n".join(response), ephemeral=True)
+        await interaction.followup.send("\n".join(response), ephemeral=True)
 
 
 class TimeoutDeleteView(discord.ui.View):

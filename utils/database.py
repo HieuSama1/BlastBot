@@ -1,11 +1,12 @@
 """Database helper cho SQLite"""
 
 import aiosqlite
+import json
 import os
 from typing import Optional, Dict
 import logging
 from utils.error_handler import DatabaseError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
 
 logger = logging.getLogger('BlastBot.Database')
@@ -36,7 +37,7 @@ class LRUCache:
         
         # Check if expired
         timestamp = self.timestamps.get(key)
-        if timestamp and datetime.utcnow() - timestamp >= self.ttl:
+        if timestamp and datetime.now(timezone.utc) - timestamp >= self.ttl:
             self.delete(key)
             return None
         
@@ -52,7 +53,7 @@ class LRUCache:
         
         # Add new item
         self.cache[key] = value.copy()
-        self.timestamps[key] = datetime.utcnow()
+        self.timestamps[key] = datetime.now(timezone.utc)
         
         # Remove oldest if over maxsize
         if len(self.cache) > self.maxsize:
@@ -73,7 +74,7 @@ class LRUCache:
     
     def get_stats(self) -> dict:
         """Get cache statistics"""
-        current_time = datetime.utcnow()
+        current_time = datetime.now(timezone.utc)
         valid_entries = sum(
             1 for key, timestamp in self.timestamps.items()
             if current_time - timestamp < self.ttl
@@ -108,6 +109,7 @@ class Database:
             self.conn = await aiosqlite.connect(self.db_path)
             if self.conn:
                 self.conn.row_factory = aiosqlite.Row
+                await self.conn.execute("PRAGMA foreign_keys = ON")
                 await self.initialize_tables()
             logger.info(f"Database connected: {self.db_path}")
         except aiosqlite.Error as e:
@@ -132,21 +134,23 @@ class Database:
             await self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS guilds (
                     guild_id INTEGER PRIMARY KEY,
-                    prefix TEXT DEFAULT '!',
                     welcome_channel_id INTEGER,
                     log_channel_id INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
+            await self._ensure_users_table()
+
             await self.conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    guild_id INTEGER,
-                    points INTEGER DEFAULT 0,
-                    warnings INTEGER DEFAULT 0,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id)
+                CREATE TABLE IF NOT EXISTS role_menus (
+                    message_id INTEGER PRIMARY KEY,
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    role_ids TEXT NOT NULL,
+                    mode TEXT NOT NULL DEFAULT 'toggle',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                 )
             """)
             
@@ -155,6 +159,114 @@ class Database:
         except aiosqlite.Error as e:
             logger.error(f"Failed to initialize tables: {e}")
             raise DatabaseError(f"Table initialization failed: {e}")
+
+    async def _get_table_columns(self, table_name: str) -> list[dict]:
+        if not self.conn:
+            return []
+
+        async with self.conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    async def _ensure_users_table(self):
+        if not self.conn:
+            return
+
+        columns = await self._get_table_columns('users')
+        if not columns:
+            await self.conn.execute("""
+                CREATE TABLE users (
+                    user_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    points INTEGER DEFAULT 0,
+                    warnings INTEGER DEFAULT 0,
+                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, guild_id),
+                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+                )
+            """)
+            return
+
+        pk_columns = [column['name'] for column in columns if column['pk']]
+        guild_id_column = next((column for column in columns if column['name'] == 'guild_id'), None)
+
+        if pk_columns == ['user_id', 'guild_id'] and guild_id_column and guild_id_column['notnull'] == 1:
+            return
+
+        await self._migrate_users_table()
+
+    async def _migrate_users_table(self):
+        if not self.conn:
+            return
+
+        logger.warning("Migrating users table to composite primary key (user_id, guild_id)")
+        await self.conn.execute("ALTER TABLE users RENAME TO users_legacy")
+        await self.conn.execute("""
+            CREATE TABLE users (
+                user_id INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                points INTEGER DEFAULT 0,
+                warnings INTEGER DEFAULT 0,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, guild_id),
+                FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
+            )
+        """)
+
+        async with self.conn.execute("SELECT COUNT(*) AS count FROM users_legacy WHERE guild_id IS NULL") as cursor:
+            row = await cursor.fetchone()
+            skipped_rows = int(row['count']) if row else 0
+            if skipped_rows:
+                logger.warning(f"Skipped {skipped_rows} legacy user rows without guild_id during migration")
+
+        await self.conn.execute("""
+            INSERT OR REPLACE INTO users (user_id, guild_id, points, warnings, last_active)
+            SELECT user_id, guild_id, points, warnings, last_active
+            FROM users_legacy
+            WHERE guild_id IS NOT NULL
+        """)
+        await self.conn.execute("DROP TABLE users_legacy")
+
+    async def save_role_menu(self, message_id: int, guild_id: int, channel_id: int, role_ids: list[int], mode: str):
+        if not self.conn:
+            return
+
+        await self.conn.execute(
+            """
+            INSERT INTO role_menus (message_id, guild_id, channel_id, role_ids, mode)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+                guild_id = excluded.guild_id,
+                channel_id = excluded.channel_id,
+                role_ids = excluded.role_ids,
+                mode = excluded.mode
+            """,
+            (message_id, guild_id, channel_id, json.dumps(role_ids), mode)
+        )
+        await self.conn.commit()
+
+    async def get_role_menus(self) -> list[dict]:
+        if not self.conn:
+            return []
+
+        async with self.conn.execute("SELECT * FROM role_menus") as cursor:
+            rows = await cursor.fetchall()
+            menus = []
+            for row in rows:
+                menu = dict(row)
+                try:
+                    menu['role_ids'] = [int(role_id) for role_id in json.loads(menu['role_ids'])]
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    menu['role_ids'] = []
+                menus.append(menu)
+            return menus
+
+    async def delete_role_menu(self, message_id: int):
+        if not self.conn:
+            return
+
+        await self.conn.execute("DELETE FROM role_menus WHERE message_id = ?", (message_id,))
+        await self.conn.commit()
     
     async def get_guild_config(self, guild_id: int) -> dict:
         """Lấy config của guild (with caching)"""
@@ -166,7 +278,6 @@ class Database:
         
         default_config = {
             'guild_id': guild_id,
-            'prefix': '!',
             'welcome_channel_id': None,
             'log_channel_id': None
         }
@@ -204,7 +315,7 @@ class Database:
         if not self.conn:
             return
         
-        valid_fields = ['prefix', 'welcome_channel_id', 'log_channel_id']
+        valid_fields = ['welcome_channel_id', 'log_channel_id']
         updates = {k: v for k, v in kwargs.items() if k in valid_fields}
         
         if not updates:

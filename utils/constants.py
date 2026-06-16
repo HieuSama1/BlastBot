@@ -59,10 +59,6 @@ BOT_INFO = {
 
 # Bot configuration constants
 BOT_CONFIG = {
-    'auto_restart_interval_hours': 12,
-    'restart_delay_seconds': 5,
-    'max_restart_retries': 3,
-    'restart_retry_window_minutes': 5,
     'min_token_length': 50,
 }
 
@@ -74,7 +70,6 @@ CACHE_CONFIG = {
 
 # Role menu configuration
 ROLE_MENU_CONFIG = {
-    'processing_delay_seconds': 1,
     'max_roles_per_menu': 25,  # Discord limit
 }
 

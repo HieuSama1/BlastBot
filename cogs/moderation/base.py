@@ -159,11 +159,14 @@ class BaseModerationCog(commands.Cog):
         from utils.constants import COLORS
         
         try:
-            # Get log channel từ database
-            db = Database()
-            await db.connect()
+            db = getattr(self.bot, 'db', None)
+            created_local_db = False
+            if db is None:
+                db = Database()
+                await db.connect()
+                created_local_db = True
+
             config = await db.get_guild_config(guild.id)
-            await db.close()
             
             if not config.get('log_channel_id'):
                 return
@@ -191,6 +194,9 @@ class BaseModerationCog(commands.Cog):
             
         except Exception as e:
             self.logger.error(f"Failed to log moderation action: {e}", exc_info=True)
+        finally:
+            if 'created_local_db' in locals() and created_local_db:
+                await db.close()
 
 
 # Shared validation functions (can be used outside of class)

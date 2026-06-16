@@ -1,11 +1,11 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 import asyncio
 import os
 from dotenv import load_dotenv
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Load environment variables
 load_dotenv()
@@ -42,8 +42,9 @@ class BlastBot(commands.Bot):
         # Thời gian khởi động bot
         self.start_time = None
         
-        # Task tự động restart
-        self.auto_restart_task = None
+        # Shared database connection
+        self.db = None
+        self._persistent_views_registered = False
     
     def _discover_extensions(self) -> list[str]:
         """Tự động tìm và load tất cả cog modules"""
@@ -80,6 +81,10 @@ class BlastBot(commands.Bot):
     async def setup_hook(self):
         """Called when the bot is starting up"""
         logger.info("Đang tải extensions...")
+
+        from utils.database import Database
+        self.db = Database()
+        await self.db.connect()
         
         # Set up tree error handler
         self.tree.on_error = self.on_app_command_error
@@ -91,6 +96,36 @@ class BlastBot(commands.Bot):
                 logger.info(f"✅ Đã tải {ext}")
             except Exception as e:
                 logger.error(f"❌ Không thể tải {ext}: {e}")
+
+    async def _register_persistent_views(self):
+        """Đăng ký lại các persistent role menu views đã được lưu."""
+        if self._persistent_views_registered or not self.db:
+            return
+
+        try:
+            from cogs.utilities.roles import RoleMenuView
+
+            menus = await self.db.get_role_menus()
+            registered = 0
+
+            for menu in menus:
+                guild = self.get_guild(menu['guild_id'])
+                if not guild:
+                    continue
+
+                roles = [guild.get_role(role_id) for role_id in menu['role_ids']]
+                roles = [role for role in roles if role is not None]
+                if not roles:
+                    continue
+
+                view = RoleMenuView(roles=roles, mode=menu['mode'])
+                self.add_view(view, message_id=menu['message_id'])
+                registered += 1
+
+            self._persistent_views_registered = True
+            logger.info(f"Đã đăng ký lại {registered} persistent role menu views")
+        except Exception as e:
+            logger.error(f"❌ Không thể đăng ký persistent views: {e}", exc_info=True)
         
         # Sync commands (global hoặc guild-specific cho testing)
         guild_id = os.getenv('GUILD_ID')
@@ -118,13 +153,10 @@ class BlastBot(commands.Bot):
         logger.info(f"📊 Đang hoạt động trên {len(self.guilds)} servers")
         
         # Lưu thời gian khởi động
-        self.start_time = datetime.now()
+        self.start_time = datetime.now(timezone.utc)
         logger.info(f"⏰ Bot khởi động lúc: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Bắt đầu task tự động restart nếu chưa chạy
-        if self.auto_restart_task is None or self.auto_restart_task.done():
-            self.auto_restart_task = asyncio.create_task(self._auto_restart_loop())
-            logger.info("✅ Đã kích hoạt tính năng tự động khởi động lại mỗi 12 tiếng")
+
+        await self._register_persistent_views()
         
         # Set bot status
         await self.change_presence(
@@ -137,19 +169,13 @@ class BlastBot(commands.Bot):
     async def close(self):
         """Graceful shutdown"""
         logger.info("🛑 Đang tắt bot...")
-        
-        # Hủy task tự động restart nếu đang chạy
-        if self.auto_restart_task and not self.auto_restart_task.done():
-            self.auto_restart_task.cancel()
-            logger.info("✅ Đã hủy task tự động khởi động lại")
-        
-        # Close database connections if exists
-        try:
-            from utils.database import Database
-            # Database cleanup would go here if needed
-            logger.info("✅ Đã cleanup resources")
-        except Exception as e:
-            logger.error(f"❌ Lỗi khi cleanup: {e}")
+
+        if getattr(self, 'db', None):
+            try:
+                await self.db.close()
+                logger.info("✅ Đã đóng database")
+            except Exception as e:
+                logger.error(f"❌ Lỗi khi đóng database: {e}", exc_info=True)
         
         # Call parent close
         await super().close()
@@ -189,53 +215,6 @@ class BlastBot(commands.Bot):
         
         await handle_command_error(interaction, original_error)
     
-    async def _auto_restart_loop(self):
-        """Background task để tự động restart bot mỗi 12 tiếng"""
-        try:
-            from utils.constants import BOT_CONFIG
-            
-            # Chờ theo cấu hình (mặc định 12 giờ)
-            RESTART_INTERVAL = BOT_CONFIG['auto_restart_interval_hours'] * 60 * 60
-            
-            while True:
-                await asyncio.sleep(RESTART_INTERVAL)
-                
-                # Log thông tin trước khi restart
-                uptime = datetime.now() - self.start_time if self.start_time else None
-                logger.info("=" * 50)
-                logger.info("🔄 Đã đến thời gian tự động khởi động lại bot")
-                if uptime:
-                    logger.info(f"⏱️ Uptime: {uptime}")
-                logger.info("=" * 50)
-                
-                # Gửi thông báo trước khi restart (nếu có owner được cấu hình)
-                await self._notify_before_restart()
-                
-                # Đóng bot và trigger restart
-                await self.close()
-                
-        except asyncio.CancelledError:
-            logger.info("⚠️ Task tự động khởi động lại đã bị hủy")
-        except Exception as e:
-            logger.error(f"❌ Lỗi trong task tự động khởi động lại: {e}", exc_info=True)
-    
-    async def _notify_before_restart(self):
-        """Gửi thông báo cho owner trước khi restart (tùy chọn)"""
-        try:
-            owner_id = os.getenv('OWNER_ID')
-            if owner_id:
-                owner = await self.fetch_user(int(owner_id))
-                if owner:
-                    await owner.send(
-                        "🔄 Bot sẽ tự động khởi động lại trong vài giây để duy trì hiệu suất tối ưu.\n"
-                        "⏰ Thời gian: Mỗi 12 tiếng một lần."
-                    )
-                    logger.info(f"✅ Đã gửi thông báo restart cho owner (ID: {owner_id})")
-        except Exception as e:
-            # Không cần báo lỗi nếu không gửi được thông báo
-            logger.debug(f"Không thể gửi thông báo restart: {e}")
-
-
 async def main():
     """Main entry point"""
     # Check for token
@@ -255,62 +234,17 @@ async def main():
     
     # Create data directory if not exists
     Path('data').mkdir(exist_ok=True)
-    
-    # Max retry count để tránh infinite loop
-    from utils.constants import BOT_CONFIG
-    
-    MAX_RESTART_RETRIES = BOT_CONFIG['max_restart_retries']
-    restart_count = 0
-    last_restart_time = datetime.now()
-    
-    # Vòng lặp restart tự động
-    while True:
-        # Start bot
-        bot = BlastBot()
-        bot._restart_count = restart_count
-        
+
+    bot = BlastBot()
+    async with bot:
         try:
             await bot.start(token)
         except KeyboardInterrupt:
             logger.info("⚠️ Nhận tín hiệu KeyboardInterrupt (Ctrl+C)")
-            if not bot.is_closed():
-                await bot.close()
-            break  # Thoát vòng lặp khi người dùng dừng thủ công
         except discord.LoginFailure:
             logger.error("❌ Token không hợp lệ! Không thể đăng nhập vào Discord.")
-            if not bot.is_closed():
-                await bot.close()
-            break
         except Exception as e:
             logger.error(f"❌ Lỗi khi chạy bot: {e}", exc_info=True)
-            restart_count += 1
-            
-            # Kiểm tra xem có phải lỗi liên tục không
-            if datetime.now() - last_restart_time < timedelta(minutes=BOT_CONFIG['restart_retry_window_minutes']):
-                if restart_count >= MAX_RESTART_RETRIES:
-                    logger.error(f"❌ Bot đã crash {MAX_RESTART_RETRIES} lần trong 5 phút. Dừng để tránh infinite loop.")
-                    if not bot.is_closed():
-                        await bot.close()
-                    break
-            else:
-                # Reset counter nếu đã qua 5 phút kể từ lần restart cuối
-                restart_count = 1
-            
-            last_restart_time = datetime.now()
-        finally:
-            if not bot.is_closed():
-                await bot.close()
-        
-        # Kiểm tra xem có phải restart tự động không
-        if bot.auto_restart_task and not bot.auto_restart_task.cancelled():
-            from utils.constants import BOT_CONFIG
-            logger.info("🔄 Đang khởi động lại bot... (Auto-restart)")
-            restart_count = 0  # Reset counter cho auto-restart
-            await asyncio.sleep(BOT_CONFIG['restart_delay_seconds'])  # Chờ trước khi restart
-        else:
-            # Nếu không phải restart tự động thì thoát
-            logger.info("🛑 Bot đã dừng hoàn toàn")
-            break
 
 
 if __name__ == "__main__":

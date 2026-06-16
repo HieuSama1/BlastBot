@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from utils.embeds import user_info_embed, create_embed, success_embed
 from utils.constants import COLORS
 from utils.modals import ReportModal
@@ -78,7 +78,7 @@ class ContextMenus(commands.Cog):
                 await asyncio.sleep(3600)  # Run every hour
                 
                 # Remove entries older than 1 hour
-                current_time = datetime.utcnow()
+                current_time = datetime.now(timezone.utc)
                 to_remove = []
                 
                 for msg_id, data in self._temp_report_messages.items():
@@ -180,7 +180,7 @@ class ContextMenus(commands.Cog):
             'channel': message.channel.id,
             'jump_url': message.jump_url,
             'content': message.content[:100],  # First 100 chars
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.now(timezone.utc)
         }
         
         await interaction.response.send_modal(modal)

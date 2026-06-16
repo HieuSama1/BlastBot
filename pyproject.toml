@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "BlastBot"
+version = "1.0.1"
+description = "Discord bot hiện đại với slash commands"
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py>=2.4.0",
+    "python-dotenv>=1.0.0",
+    "aiosqlite>=0.19.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]

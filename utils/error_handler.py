@@ -27,7 +27,7 @@ class ValidationError(BotError):
     pass
 
 
-class PermissionError(BotError):
+class BotPermissionError(BotError):
     """Exception cho permission errors"""
     pass
 

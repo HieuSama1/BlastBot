@@ -50,12 +50,15 @@ class ReportModal(discord.ui.Modal, title="Báo cáo người dùng/tin nhắn")
         # Gửi vào log channel nếu có
         if interaction.guild:
             try:
-                # Lấy log channel từ database
                 from utils.database import Database
-                db = Database()
-                await db.connect()
+                db = getattr(interaction.client, 'db', None)
+                created_local_db = False
+                if db is None:
+                    db = Database()
+                    await db.connect()
+                    created_local_db = True
+
                 config = await db.get_guild_config(interaction.guild.id)
-                await db.close()
                 
                 if config.get('log_channel_id'):
                     log_channel = interaction.guild.get_channel(config['log_channel_id'])
@@ -63,6 +66,9 @@ class ReportModal(discord.ui.Modal, title="Báo cáo người dùng/tin nhắn")
                         await log_channel.send(embed=report_embed)
             except Exception as e:
                 logger.error(f"Failed to send report to log channel: {e}")
+            finally:
+                if 'created_local_db' in locals() and created_local_db:
+                    await db.close()
         
         # Xác nhận với user
         await interaction.response.send_message(
@@ -203,10 +209,14 @@ class BugReportModal(discord.ui.Modal, title="Báo cáo lỗi"):
         if interaction.guild:
             try:
                 from utils.database import Database
-                db = Database()
-                await db.connect()
+                db = getattr(interaction.client, 'db', None)
+                created_local_db = False
+                if db is None:
+                    db = Database()
+                    await db.connect()
+                    created_local_db = True
+
                 config = await db.get_guild_config(interaction.guild.id)
-                await db.close()
                 
                 if config.get('log_channel_id'):
                     log_channel = interaction.guild.get_channel(config['log_channel_id'])
@@ -214,6 +224,9 @@ class BugReportModal(discord.ui.Modal, title="Báo cáo lỗi"):
                         await log_channel.send(embed=bug_embed)
             except Exception as e:
                 logger.error(f"Failed to send bug report: {e}")
+            finally:
+                if 'created_local_db' in locals() and created_local_db:
+                    await db.close()
         
         from utils.embeds import success_embed
         await interaction.response.send_message(

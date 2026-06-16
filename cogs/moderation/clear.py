@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from utils.embeds import success_embed, error_embed
 from .base import BaseModerationCog, validate_amount
 
@@ -64,9 +64,9 @@ class ClearCommand(BaseModerationCog):
             
             # Phân loại tin nhắn theo độ tuổi (Discord chỉ cho bulk delete tin nhắn < 14 ngày)
             from utils.constants import CLEAR_CONFIG
-            two_weeks_ago = datetime.utcnow() - timedelta(days=CLEAR_CONFIG['message_age_limit_days'])
-            bulk_delete_messages = [msg for msg in messages if msg.created_at.replace(tzinfo=None) > two_weeks_ago]
-            old_messages = [msg for msg in messages if msg.created_at.replace(tzinfo=None) <= two_weeks_ago]
+            two_weeks_ago = datetime.now(timezone.utc) - timedelta(days=CLEAR_CONFIG['message_age_limit_days'])
+            bulk_delete_messages = [msg for msg in messages if msg.created_at > two_weeks_ago]
+            old_messages = [msg for msg in messages if msg.created_at <= two_weeks_ago]
             
             deleted_count = 0
             

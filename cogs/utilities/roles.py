@@ -148,7 +148,17 @@ class RolesCommand(commands.Cog):
             
             view = RoleMenuView(roles=role_list, mode=mode)
             
-            await interaction.followup.send(embed=embed, view=view)
+            message = await interaction.followup.send(embed=embed, view=view, wait=True)
+
+            db = getattr(self.bot, 'db', None)
+            if db and message:
+                await db.save_role_menu(
+                    message.id,
+                    interaction.guild.id,
+                    message.channel.id,
+                    [role.id for role in role_list],
+                    mode
+                )
             
             self.logger.info(
                 f"Role menu created by {interaction.user} in {interaction.guild.name}"
