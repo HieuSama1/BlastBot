@@ -9,6 +9,8 @@ from utils.error_handler import DatabaseError
 from datetime import datetime, timedelta, timezone
 from collections import OrderedDict
 
+from utils.constants import CACHE_CONFIG
+
 logger = logging.getLogger('BlastBot.Database')
 # Ngăn logger của Database ghi ra console thông qua root logger
 # và đảm bảo vẫn ghi vào file log chung.
@@ -91,9 +93,8 @@ class LRUCache:
 
 class Database:
     """Wrapper cho aiosqlite database operations với caching"""
-    
+
     # Class-level LRU cache cho guild configs
-    from utils.constants import CACHE_CONFIG
     _guild_config_cache = LRUCache(
         maxsize=CACHE_CONFIG['guild_config_maxsize'],
         ttl_seconds=CACHE_CONFIG['guild_config_ttl_seconds']
@@ -140,7 +141,14 @@ class Database:
                 )
             """)
 
-            await self._ensure_users_table()
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    warnings INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            """)
 
             await self.conn.execute("""
                 CREATE TABLE IF NOT EXISTS role_menus (
@@ -162,6 +170,28 @@ class Database:
                     PRIMARY KEY (message_id, user_id)
                 )
             """)
+
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS suggestion_messages (
+                    guild_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    PRIMARY KEY (message_id)
+                )
+            """)
+
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS moderation_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    moderator_id INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    target_str TEXT,
+                    reason TEXT,
+                    extra_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
             await self.conn.commit()
             logger.info("Database tables initialized")
@@ -169,72 +199,26 @@ class Database:
             logger.error(f"Failed to initialize tables: {e}")
             raise DatabaseError(f"Table initialization failed: {e}")
 
-    async def _get_table_columns(self, table_name: str) -> list[dict]:
+    async def register_suggestion_message(self, guild_id: int, message_id: int):
+        if not self.conn:
+            return
+
+        await self.conn.execute(
+            """
+            INSERT OR IGNORE INTO suggestion_messages (guild_id, message_id)
+            VALUES (?, ?)
+            """,
+            (guild_id, message_id)
+        )
+        await self.conn.commit()
+
+    async def get_suggestion_messages(self) -> list[int]:
         if not self.conn:
             return []
 
-        async with self.conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+        async with self.conn.execute("SELECT message_id FROM suggestion_messages") as cursor:
             rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
-
-    async def _ensure_users_table(self):
-        if not self.conn:
-            return
-
-        columns = await self._get_table_columns('users')
-        if not columns:
-            await self.conn.execute("""
-                CREATE TABLE users (
-                    user_id INTEGER NOT NULL,
-                    guild_id INTEGER NOT NULL,
-                    points INTEGER DEFAULT 0,
-                    warnings INTEGER DEFAULT 0,
-                    last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, guild_id),
-                    FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
-                )
-            """)
-            return
-
-        pk_columns = [column['name'] for column in columns if column['pk']]
-        guild_id_column = next((column for column in columns if column['name'] == 'guild_id'), None)
-
-        if pk_columns == ['user_id', 'guild_id'] and guild_id_column and guild_id_column['notnull'] == 1:
-            return
-
-        await self._migrate_users_table()
-
-    async def _migrate_users_table(self):
-        if not self.conn:
-            return
-
-        logger.warning("Migrating users table to composite primary key (user_id, guild_id)")
-        await self.conn.execute("ALTER TABLE users RENAME TO users_legacy")
-        await self.conn.execute("""
-            CREATE TABLE users (
-                user_id INTEGER NOT NULL,
-                guild_id INTEGER NOT NULL,
-                points INTEGER DEFAULT 0,
-                warnings INTEGER DEFAULT 0,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, guild_id),
-                FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
-            )
-        """)
-
-        async with self.conn.execute("SELECT COUNT(*) AS count FROM users_legacy WHERE guild_id IS NULL") as cursor:
-            row = await cursor.fetchone()
-            skipped_rows = int(row['count']) if row else 0
-            if skipped_rows:
-                logger.warning(f"Skipped {skipped_rows} legacy user rows without guild_id during migration")
-
-        await self.conn.execute("""
-            INSERT OR REPLACE INTO users (user_id, guild_id, points, warnings, last_active)
-            SELECT user_id, guild_id, points, warnings, last_active
-            FROM users_legacy
-            WHERE guild_id IS NOT NULL
-        """)
-        await self.conn.execute("DROP TABLE users_legacy")
+        return [row['message_id'] for row in rows]
 
     async def save_role_menu(self, message_id: int, guild_id: int, channel_id: int, role_ids: list[int], mode: str):
         if not self.conn:
@@ -328,6 +312,38 @@ class Database:
         ) as cursor:
             row = await cursor.fetchone()
         return row['vote'] if row else None
+
+    async def add_mod_log(
+        self,
+        guild_id: int,
+        moderator_id: int,
+        action: str,
+        target_id: int,
+        target_str: Optional[str],
+        reason: Optional[str],
+        **extra,
+    ):
+        if not self.conn:
+            return
+
+        extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+        await self.conn.execute(
+            """
+            INSERT INTO moderation_logs (
+                guild_id, moderator_id, action, target_id, target_str, reason, extra_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (guild_id, moderator_id, action, target_id, target_str, reason, extra_json)
+        )
+        await self.conn.commit()
+
+    async def _get_table_columns(self, table_name: str) -> list[dict]:
+        if not self.conn:
+            return []
+
+        async with self.conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
     
     async def get_guild_config(self, guild_id: int) -> dict:
         """Lấy config của guild (with caching)"""
@@ -422,54 +438,52 @@ class Database:
         return cls._guild_config_cache.get_stats()
     
     async def get_user_data(self, user_id: int, guild_id: int) -> dict:
-        """Lấy dữ liệu user"""
+        """Lấy dữ liệu warning của user"""
         default_data = {
             'user_id': user_id,
             'guild_id': guild_id,
-            'points': 0,
-            'warnings': 0
+            'warnings': 0,
         }
-        
+
         if not self.conn:
             return default_data
-        
+
         try:
             async with self.conn.execute(
-                "SELECT * FROM users WHERE user_id = ? AND guild_id = ?",
+                "SELECT guild_id, user_id, warnings FROM users WHERE user_id = ? AND guild_id = ?",
                 (user_id, guild_id)
             ) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     return dict(row)
-                else:
-                    # Tạo user mới nếu chưa có
-                    await self.conn.execute(
-                        "INSERT INTO users (user_id, guild_id) VALUES (?, ?)",
-                        (user_id, guild_id)
-                    )
-                    await self.conn.commit()
-                    return default_data
+
+                await self.conn.execute(
+                    "INSERT INTO users (guild_id, user_id, warnings) VALUES (?, ?, 0)",
+                    (guild_id, user_id)
+                )
+                await self.conn.commit()
+                return default_data
         except aiosqlite.Error as e:
             logger.error(f"Failed to get user data for {user_id} in guild {guild_id}: {e}")
             return default_data
-    
+
     async def update_user_data(self, user_id: int, guild_id: int, **kwargs):
-        """Cập nhật dữ liệu user"""
+        """Cập nhật dữ liệu warning của user"""
         if not self.conn:
             return
-        
-        valid_fields = ['points', 'warnings', 'last_active']
+
+        valid_fields = ['warnings']
         updates = {k: v for k, v in kwargs.items() if k in valid_fields}
-        
+
         if not updates:
             return
-        
+
         try:
             set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-            values = list(updates.values()) + [user_id, guild_id]
-            
+            values = list(updates.values()) + [guild_id, user_id]
+
             await self.conn.execute(
-                f"UPDATE users SET {set_clause} WHERE user_id = ? AND guild_id = ?",
+                f"UPDATE users SET {set_clause} WHERE guild_id = ? AND user_id = ?",
                 values
             )
             await self.conn.commit()
@@ -478,3 +492,30 @@ class Database:
             logger.error(f"Failed to update user data for {user_id} in guild {guild_id}: {e}")
             await self.conn.rollback()
             raise DatabaseError(f"Failed to update user data: {e}")
+
+    async def add_warning(self, guild_id: int, user_id: int) -> int:
+        if not self.conn:
+            return 0
+
+        await self.conn.execute(
+            """
+            INSERT INTO users (guild_id, user_id, warnings)
+            VALUES (?, ?, 1)
+            ON CONFLICT(guild_id, user_id)
+            DO UPDATE SET warnings = warnings + 1
+            """,
+            (guild_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_warnings(guild_id, user_id)
+
+    async def get_warnings(self, guild_id: int, user_id: int) -> int:
+        if not self.conn:
+            return 0
+
+        async with self.conn.execute(
+            "SELECT warnings FROM users WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else 0

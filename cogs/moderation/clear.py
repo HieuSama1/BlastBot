@@ -108,9 +108,8 @@ class ClearCommand(BaseModerationCog):
                     interaction.guild,
                     interaction.user,
                     "clear",
-                    interaction.user,  # Clearer is both moderator and "target"
-                    f"Cleared {deleted_count} messages",
-                    f"Channel: {interaction.channel.mention if hasattr(interaction.channel, 'mention') else 'Unknown'}"
+                    target=None,
+                    reason=f"Đã xóa {deleted_count} tin nhắn trong #{interaction.channel.name}",
                 )
             
             await interaction.followup.send(

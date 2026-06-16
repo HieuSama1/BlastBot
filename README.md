@@ -1,6 +1,6 @@
 # BlastBot 🚀
 
-Modern Discord bot with slash commands, advanced moderation tools, and auto-management features.
+Modern Discord bot with slash commands và các công cụ moderation/feedback thực tế.
 
 ## ✨ Features
 
@@ -8,6 +8,8 @@ Modern Discord bot with slash commands, advanced moderation tools, and auto-mana
 - **Moderation Suite** - Kick, ban, timeout, and message management
 - **Role Management** - Interactive role menus with button/select controls
 - **Context Menus** - Right-click actions on users and messages
+- **Feedback** - Suggestion modal với voting persistent
+- **Moderation Warnings** - Warn và warnings tracking
 - **Database** - SQLite with async operations and smart caching
 - **Error Handling** - Comprehensive error handling with user-friendly messages
 - **Logging** - Console output and UTF-8 file logging
@@ -84,6 +86,8 @@ python main.py
 - `/ban <member> [reason] [delete_messages]` - Ban a member
 - `/timeout <member> <duration> [reason]` - Timeout a member
 - `/clear <amount>` - Clear messages from channel
+- `/warn <member> [reason]` - Cảnh cáo một thành viên
+- `/warnings <member>` - Xem số cảnh cáo của thành viên
 
 ### Roles
 - `/rolemenu` - Create an interactive role selection menu
@@ -93,6 +97,7 @@ python main.py
 
 ### Core
 - `/help [command]` - Show available commands or specific command info
+- `/suggest` - Gửi góp ý cho server
 
 ### Context Menus
 Right-click on users or messages for quick actions:
@@ -112,13 +117,13 @@ Right-click on users or messages for quick actions:
 - `GUILD_ID` - Guild ID for testing (enables instant command sync)
 - `BOT_PREFIX` - Command prefix for hybrid commands (default: `!`)
 - `DEBUG_MODE` - Enable debug logging (default: `False`)
-- `OWNER_ID` - Your Discord user ID for owner-only commands
+- `OWNER_ID` - Your Discord user ID cho các lệnh owner-only
 
 ## 🗃️ Database
 
 BlastBot uses **async SQLite** via `aiosqlite` with the following features:
 - **Guild configurations** - Per-server settings and preferences
-- **User data** - Points, warnings, activity tracking
+- **User data** - Warnings tracking
 - **Smart caching** - 5-minute TTL cache for frequently accessed data
 - **Automatic initialization** - Tables created on first run
 

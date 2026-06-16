@@ -168,7 +168,7 @@ class BlastBot(commands.Bot):
                 registered += 1
 
             from utils.modals import SuggestionVotingView
-            self.add_view(SuggestionVotingView())
+            self.add_view(SuggestionVotingView(self.db))
 
             self._persistent_views_registered = True
             logger.info(f"Đã đăng ký lại {registered} persistent role menu views")

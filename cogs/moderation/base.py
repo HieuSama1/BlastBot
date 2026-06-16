@@ -167,9 +167,10 @@ class BaseModerationCog(commands.Cog):
         guild: discord.Guild,
         moderator: discord.Member | discord.User,
         action: str,
-        target: discord.Member | discord.User,
-        reason: str,
-        extra_info: Optional[str] = None
+        target: discord.abc.User | None = None,
+        reason: str | None = None,
+        extra_info: Optional[str] = None,
+        **extra
     ):
         """
         Log moderation action vào log channel nếu có
@@ -182,17 +183,27 @@ class BaseModerationCog(commands.Cog):
             reason: Reason for action
             extra_info: Extra info to log (optional)
         """
-        from utils.database import Database
         from utils.embeds import create_embed
         from utils.constants import COLORS
         
         try:
             db = getattr(self.bot, 'db', None)
-            created_local_db = False
             if db is None:
-                db = Database()
-                await db.connect()
-                created_local_db = True
+                self.bot.logger.warning("log_moderation_action gọi khi DB chưa sẵn sàng")
+                return
+
+            target_id = target.id if target is not None else 0
+            target_str = str(target) if target is not None else None
+
+            await db.add_mod_log(
+                guild_id=guild.id,
+                moderator_id=moderator.id,
+                action=action,
+                target_id=target_id,
+                target_str=target_str,
+                reason=reason,
+                **extra,
+            )
 
             config = await db.get_guild_config(guild.id)
             
@@ -207,10 +218,12 @@ class BaseModerationCog(commands.Cog):
             embed = create_embed(
                 title=f"🛡️ Moderation Action: {action.title()}",
                 description=f"**Moderator:** {moderator.mention} (`{moderator.id}`)\n"
-                           f"**Target:** {target.mention} (`{target.id}`)\n"
-                           f"**Reason:** {reason}",
+                           f"**Reason:** {reason or 'Không có lý do'}",
                 color=COLORS['warning']
             )
+
+            if target_str:
+                embed.add_field(name="Target", value=target_str, inline=True)
             
             if extra_info:
                 embed.add_field(name="Extra Info", value=extra_info, inline=False)
@@ -222,9 +235,6 @@ class BaseModerationCog(commands.Cog):
             
         except Exception as e:
             self.logger.error(f"Failed to log moderation action: {e}", exc_info=True)
-        finally:
-            if 'created_local_db' in locals() and created_local_db:
-                await db.close()
 
 
 # Shared validation functions (can be used outside of class)
