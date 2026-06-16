@@ -97,8 +97,22 @@ class BlastBot(commands.Bot):
             except Exception as e:
                 logger.error(f"❌ Không thể tải {ext}: {e}")
 
+        # Sync commands (global hoặc guild-specific cho testing)
+        guild_id = os.getenv('GUILD_ID')
+        if guild_id:
+            # Sync to specific guild for faster testing
+            guild = discord.Object(id=int(guild_id))
+            self.tree.copy_global_to(guild=guild)
+            
+            synced = await self.tree.sync(guild=guild)
+            logger.info(f"Đã sync {len(synced)} commands cho guild {guild_id}")
+        else:
+            # Sync globally (có thể mất ~1 giờ để update)
+            synced = await self.tree.sync()
+            logger.info(f"Đã sync {len(synced)} commands globally")
+
     async def _register_persistent_views(self):
-        """Đăng ký lại các persistent role menu views đã được lưu."""
+        """Đăng ký lại các persistent role menu views đã lưu trong DB."""
         if self._persistent_views_registered or not self.db:
             return
 
@@ -113,12 +127,36 @@ class BlastBot(commands.Bot):
                 if not guild:
                     continue
 
-                roles = [guild.get_role(role_id) for role_id in menu['role_ids']]
-                roles = [role for role in roles if role is not None]
+                roles = [guild.get_role(rid) for rid in menu['role_ids']]
+                roles = [r for r in roles if r is not None]
+
                 if not roles:
+                    await self.db.delete_role_menu(menu['message_id'])
                     continue
 
-                view = RoleMenuView(roles=roles, mode=menu['mode'])
+                view = RoleMenuView(
+                    roles=roles,
+                    mode=menu['mode'],
+                    message_id=menu['message_id']
+                )
+
+                channel = self.get_channel(menu['channel_id'])
+                if channel and hasattr(channel, 'fetch_message'):
+                    try:
+                        message = await channel.fetch_message(menu['message_id'])
+                        await message.edit(view=view)
+                    except discord.NotFound:
+                        await self.db.delete_role_menu(menu['message_id'])
+                        continue
+                    except discord.Forbidden:
+                        logger.warning(
+                            f"Không đủ quyền cập nhật role menu {menu['message_id']} trong channel {menu['channel_id']}"
+                        )
+                    except discord.HTTPException as e:
+                        logger.warning(
+                            f"Không thể cập nhật role menu {menu['message_id']}: {e}"
+                        )
+
                 self.add_view(view, message_id=menu['message_id'])
                 registered += 1
 
@@ -126,25 +164,6 @@ class BlastBot(commands.Bot):
             logger.info(f"Đã đăng ký lại {registered} persistent role menu views")
         except Exception as e:
             logger.error(f"❌ Không thể đăng ký persistent views: {e}", exc_info=True)
-        
-        # Sync commands (global hoặc guild-specific cho testing)
-        guild_id = os.getenv('GUILD_ID')
-        if guild_id:
-            # Sync to specific guild for faster testing
-            guild = discord.Object(id=int(guild_id))
-            
-            # Clear old commands trước khi sync mới
-            self.tree.clear_commands(guild=guild)
-            self.tree.copy_global_to(guild=guild)
-            
-            synced = await self.tree.sync(guild=guild)
-            logger.info(f"Đã sync {len(synced)} commands cho guild {guild_id}")
-        else:
-            # Sync globally (có thể mất ~1 giờ để update)
-            # Clear old commands
-            self.tree.clear_commands(guild=None)
-            synced = await self.tree.sync()
-            logger.info(f"Đã sync {len(synced)} commands globally")
     
     async def on_ready(self):
         """Called when bot is ready"""

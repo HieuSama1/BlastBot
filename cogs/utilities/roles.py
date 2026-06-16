@@ -13,18 +13,21 @@ from utils.constants import COLORS, EMOJIS
 class RoleMenuView(PersistentView):
     """Persistent view cho role menu"""
     
-    def __init__(self, roles: List[discord.Role], mode: str = "toggle"):
+    def __init__(self, roles: List[discord.Role], mode: str = "toggle", message_id: int | None = None):
         super().__init__()
         self.roles = roles
         self.mode = mode
         
         max_values = len(roles) if mode == "toggle" else 1
+
+        custom_id = f"role_select_menu:{message_id}" if message_id else "role_select_menu:new"
         self.add_item(
             RoleSelectMenu(
                 roles=roles,
                 placeholder="Chọn roles bạn muốn...",
                 min_values=0,
-                max_values=max_values
+                max_values=max_values,
+                custom_id=custom_id
             )
         )
 
@@ -159,6 +162,14 @@ class RolesCommand(commands.Cog):
                     [role.id for role in role_list],
                     mode
                 )
+
+                persistent_view = RoleMenuView(
+                    roles=role_list,
+                    mode=mode,
+                    message_id=message.id
+                )
+                await message.edit(view=persistent_view)
+                self.bot.add_view(persistent_view, message_id=message.id)
             
             self.logger.info(
                 f"Role menu created by {interaction.user} in {interaction.guild.name}"
@@ -168,7 +179,7 @@ class RolesCommand(commands.Cog):
             self.logger.error(f"Error in rolemenu command: {e}", exc_info=True)
             try:
                 await interaction.followup.send(
-                    embed=error_embed(f"Lỗi: {str(e)}"),
+                    embed=error_embed("Đã xảy ra lỗi. Vui lòng thử lại sau."),
                     ephemeral=True
                 )
             except discord.HTTPException:
@@ -251,7 +262,7 @@ class RolesCommand(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error in roleinfo command: {e}", exc_info=True)
             await interaction.response.send_message(
-                embed=error_embed(f"Lỗi: {str(e)}"),
+                embed=error_embed("Đã xảy ra lỗi. Vui lòng thử lại sau."),
                 ephemeral=True
             )
     
@@ -311,7 +322,7 @@ class RolesCommand(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error in roleadd command: {e}", exc_info=True)
             await interaction.response.send_message(
-                embed=error_embed(f"Lỗi: {str(e)}"),
+                embed=error_embed("Đã xảy ra lỗi. Vui lòng thử lại sau."),
                 ephemeral=True
             )
     
@@ -371,7 +382,7 @@ class RolesCommand(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error in roleremove command: {e}", exc_info=True)
             await interaction.response.send_message(
-                embed=error_embed(f"Lỗi: {str(e)}"),
+                embed=error_embed("Đã xảy ra lỗi. Vui lòng thử lại sau."),
                 ephemeral=True
             )
 

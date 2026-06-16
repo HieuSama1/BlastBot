@@ -93,7 +93,7 @@ class PaginationView(discord.ui.View):
     
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Chỉ cho phép user đã gọi command tương tác"""
-        if interaction.user != self.user:
+        if interaction.user.id != self.user.id:
             await interaction.response.send_message(
                 "Bạn không thể sử dụng nút này!",
                 ephemeral=True
@@ -237,6 +237,10 @@ class RoleSelectMenu(discord.ui.Select):
                 guild = interaction.guild
                 
                 if not guild:
+                    await interaction.followup.send(
+                        "❌ Lệnh này chỉ dùng trong server!",
+                        ephemeral=True
+                    )
                     return
                 
                 await self._process_role_changes(interaction, selected_role_ids, guild)
