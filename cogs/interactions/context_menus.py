@@ -228,7 +228,3 @@ class ContextMenus(commands.Cog):
                 "❌ Không thể gửi DM cho bạn! Vui lòng bật DM từ server members.",
                 ephemeral=True
             )
-
-
-async def setup(bot):
-    await bot.add_cog(ContextMenus(bot))

@@ -8,10 +8,9 @@ Modern Discord bot with slash commands, advanced moderation tools, and auto-mana
 - **Moderation Suite** - Kick, ban, timeout, and message management
 - **Role Management** - Interactive role menus with button/select controls
 - **Context Menus** - Right-click actions on users and messages
-- **Auto-Restart** - Automatic restart every 12 hours for optimal performance
 - **Database** - SQLite with async operations and smart caching
 - **Error Handling** - Comprehensive error handling with user-friendly messages
-- **Logging** - Detailed logging with file rotation
+- **Logging** - Console output and UTF-8 file logging
 
 ## 🏗️ Architecture
 
@@ -35,7 +34,7 @@ BlastBot/
 ## 📦 Installation
 
 ### Prerequisites
-- Python 3.10 or higher
+- Python 3.12 or higher
 - Discord Bot Token ([Get one here](https://discord.com/developers/applications))
 
 ### Setup Steps
@@ -70,7 +69,7 @@ DISCORD_TOKEN=your_discord_bot_token_here
 GUILD_ID=your_test_guild_id  # Optional, for faster testing
 BOT_PREFIX=!
 DB_PATH=./data/bot.db
-OWNER_ID=your_user_id  # Optional, for restart notifications
+OWNER_ID=your_user_id  # Optional
 ```
 
 5. **Run the bot:**
@@ -81,10 +80,10 @@ python main.py
 ## 🎮 Commands
 
 ### Moderation
-- `/kick <user> [reason]` - Kick a member from the server
-- `/ban <user> [reason] [delete_days]` - Ban a member
-- `/timeout <user> <duration> [reason]` - Timeout a member
-- `/clear <amount> [user]` - Clear messages from channel
+- `/kick <member> [reason]` - Kick a member from the server
+- `/ban <member> [reason] [delete_messages]` - Ban a member
+- `/timeout <member> <duration> [reason]` - Timeout a member
+- `/clear <amount>` - Clear messages from channel
 
 ### Roles
 - `/rolemenu` - Create an interactive role selection menu
@@ -99,6 +98,9 @@ python main.py
 Right-click on users or messages for quick actions:
 - **User Info** - View detailed user information
 - **Avatar** - Display user's avatar in full size
+- **Report User** - Open a report modal for a user
+- **Report Message** - Open a report modal for a message
+- **Bookmark Message** - Send a message bookmark to DM
 
 ## ⚙️ Configuration
 
@@ -110,13 +112,7 @@ Right-click on users or messages for quick actions:
 - `GUILD_ID` - Guild ID for testing (enables instant command sync)
 - `BOT_PREFIX` - Command prefix for hybrid commands (default: `!`)
 - `DEBUG_MODE` - Enable debug logging (default: `False`)
-- `OWNER_ID` - Your Discord user ID for owner-only commands and notifications
-
-### Auto-Restart Feature
-The bot automatically restarts every 12 hours to maintain optimal performance. You can:
-- Configure `OWNER_ID` to receive restart notifications
-- Modify the interval in `main.py` (line ~180)
-- Disable by removing the `auto_restart_task` initialization
+- `OWNER_ID` - Your Discord user ID for owner-only commands
 
 ## 🗃️ Database
 
@@ -176,8 +172,10 @@ For faster testing, set `GUILD_ID` in `.env` to your test server ID. This enable
 ## 📝 Logging
 
 Logs are stored in:
-- **Console** - Real-time colored output
-- **bot.log** - Rotating file log (UTF-8, 10MB max)
+- **Console** - Real-time output
+- **bot.log** - UTF-8 file log
+
+Lưu ý: hiện chưa bật log rotation.
 
 Log levels:
 - `INFO` - Normal operations

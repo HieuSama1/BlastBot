@@ -98,9 +98,10 @@ VIEW_TIMEOUTS = {
 # Command cooldowns (per user, in seconds)
 COMMAND_COOLDOWNS = {
     'clear': 10.0,
-    'kick': 5.0,
-    'ban': 5.0,
-    'timeout': 5.0,
+    'kick': 10.0,
+    'ban': 15.0,
+    'timeout': 10.0,
+    'rolemenu': 30.0,
 }
 
 # Validation limits

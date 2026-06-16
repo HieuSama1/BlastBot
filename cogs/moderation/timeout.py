@@ -7,6 +7,7 @@ from datetime import timedelta
 import logging
 from utils.embeds import success_embed, error_embed, warning_embed
 from utils.views import ConfirmView
+from utils.constants import COMMAND_COOLDOWNS
 from .base import BaseModerationCog, validate_duration
 
 
@@ -49,7 +50,7 @@ class TimeoutCommand(BaseModerationCog):
     @app_commands.autocomplete(reason=timeout_reason_autocomplete)
     @app_commands.guild_only()
     @app_commands.default_permissions(moderate_members=True)
-    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    @app_commands.checks.cooldown(1, COMMAND_COOLDOWNS['timeout'], key=lambda i: i.user.id)
     async def timeout(
         self,
         interaction: discord.Interaction,
@@ -129,11 +130,4 @@ class TimeoutCommand(BaseModerationCog):
             )
         except Exception as e:
             self.logger.error(f"Error in timeout command: {e}", exc_info=True)
-            await interaction.edit_original_response(
-                embed=error_embed("Lỗi", f"Không thể timeout: {str(e)}"),
-                view=None
-            )
-
-
-async def setup(bot):
-    await bot.add_cog(TimeoutCommand(bot))
+            await self.safe_error_response(interaction, "Lỗi", f"Không thể timeout: {str(e)}")

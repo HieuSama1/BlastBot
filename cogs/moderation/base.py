@@ -30,18 +30,18 @@ class BaseModerationCog(commands.Cog):
         Returns:
             bool: True nếu có permission, False nếu không
         """
+        async def _send(embed):
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+
         if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message(
-                embed=error_embed("Lỗi", "Không thể xác định member!"),
-                ephemeral=True
-            )
+            await _send(error_embed("Lỗi", "Không thể xác định member!"))
             return False
         
         if not getattr(interaction.user.guild_permissions, required_permission, False):
-            await interaction.response.send_message(
-                embed=error_embed("Lỗi", MESSAGES['errors']['missing_permissions']),
-                ephemeral=True
-            )
+            await _send(error_embed("Lỗi", MESSAGES['errors']['missing_permissions']))
             return False
         
         return True
@@ -78,7 +78,7 @@ class BaseModerationCog(commands.Cog):
             return False, f"Bạn không thể {action} với member có role cao hơn hoặc bằng bạn!"
         
         # Check bot hierarchy
-        bot_member = interaction.guild.get_member(self.bot.user.id)
+        bot_member = interaction.guild.get_member(self.bot.user.id) if self.bot.user else None
         if bot_member and target.top_role >= bot_member.top_role:
             return False, f"Bot không thể {action} với member có role cao hơn hoặc bằng bot!"
         
@@ -133,6 +133,34 @@ class BaseModerationCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def safe_error_response(
+        self,
+        interaction: discord.Interaction,
+        title: str,
+        description: str
+    ):
+        """
+        Gửi lỗi an toàn dù interaction đã defer hay chưa.
+        """
+        embed = error_embed(title, description)
+        try:
+            if interaction.response.is_done():
+                try:
+                    await interaction.edit_original_response(embed=embed, view=None)
+                except discord.HTTPException:
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.HTTPException as e:
+            self.logger.error(f"Không thể gửi error response: {e}")
+
+    async def try_dm_member(self, member: discord.Member, embed: discord.Embed) -> bool:
+        try:
+            await member.send(embed=embed)
+            return True
+        except (discord.Forbidden, discord.HTTPException):
+            return False
     
     async def log_moderation_action(
         self,

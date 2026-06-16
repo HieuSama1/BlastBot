@@ -7,7 +7,7 @@ import logging
 from typing import Optional, List
 from utils.embeds import success_embed, error_embed, info_embed, create_embed
 from utils.views import RoleSelectMenu, PersistentView
-from utils.constants import COLORS, EMOJIS
+from utils.constants import COLORS, EMOJIS, COMMAND_COOLDOWNS
 
 
 class RoleMenuView(PersistentView):
@@ -55,7 +55,7 @@ class RolesCommand(commands.Cog):
     ])
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_roles=True)
-    @app_commands.checks.cooldown(1, 30.0, key=lambda i: i.user.id)
+    @app_commands.checks.cooldown(1, COMMAND_COOLDOWNS['rolemenu'], key=lambda i: i.user.id)
     async def rolemenu(
         self,
         interaction: discord.Interaction,
@@ -120,6 +120,13 @@ class RolesCommand(commands.Cog):
                 )
                 return
             
+            if self.bot.user is None:
+                await interaction.followup.send(
+                    embed=error_embed("Không thể xác định bot!"),
+                    ephemeral=True
+                )
+                return
+
             bot_member = interaction.guild.get_member(self.bot.user.id)
             if not bot_member:
                 await interaction.followup.send(
@@ -385,7 +392,3 @@ class RolesCommand(commands.Cog):
                 embed=error_embed("Đã xảy ra lỗi. Vui lòng thử lại sau."),
                 ephemeral=True
             )
-
-
-async def setup(bot):
-    await bot.add_cog(RolesCommand(bot))

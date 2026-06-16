@@ -142,11 +142,6 @@ class SuggestionModal(discord.ui.Modal, title="Gửi góp ý"):
             view=view
         )
         
-        # Add reactions cho voting
-        message = await interaction.original_response()
-        await message.add_reaction("👍")
-        await message.add_reaction("👎")
-        
         logger.info(f"Suggestion posted by {interaction.user}: {self.title_field.value}")
 
 
@@ -241,28 +236,48 @@ class BugReportModal(discord.ui.Modal, title="Báo cáo lỗi"):
 
 
 class SuggestionVotingView(discord.ui.View):
-    """View cho voting suggestion"""
+    """Persistent view voting suggestion, lưu vote vào DB."""
     
     def __init__(self):
-        super().__init__(timeout=None)  # Persistent view
-        self.upvotes = 0
-        self.downvotes = 0
-    
+        super().__init__(timeout=None)
+
+    async def _handle_vote(self, interaction: discord.Interaction, vote: int):
+        db = getattr(interaction.client, 'db', None)
+        if db is None:
+            await interaction.response.send_message(
+                "❌ Hệ thống vote tạm thời không khả dụng.", ephemeral=True
+            )
+            return
+
+        message_id = interaction.message.id
+        current = await db.get_user_vote(message_id, interaction.user.id)
+
+        if current == vote:
+            await db.remove_vote(message_id, interaction.user.id)
+            note = "Đã bỏ vote."
+        else:
+            await db.set_vote(message_id, interaction.user.id, vote)
+            note = "Đã upvote! 👍" if vote == 1 else "Đã downvote! 👎"
+
+        up, down = await db.get_vote_counts(message_id)
+
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                if child.custom_id == "suggestion_upvote":
+                    child.label = str(up)
+                elif child.custom_id == "suggestion_downvote":
+                    child.label = str(down)
+
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(note, ephemeral=True)
+
     @discord.ui.button(label="0", style=discord.ButtonStyle.success, emoji="👍", custom_id="suggestion_upvote")
     async def upvote_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Upvote suggestion"""
-        self.upvotes += 1
-        button.label = str(self.upvotes)
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send("Đã upvote! 👍", ephemeral=True)
-    
+        await self._handle_vote(interaction, 1)
+
     @discord.ui.button(label="0", style=discord.ButtonStyle.danger, emoji="👎", custom_id="suggestion_downvote")
     async def downvote_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Downvote suggestion"""
-        self.downvotes += 1
-        button.label = str(self.downvotes)
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send("Đã downvote! 👎", ephemeral=True)
+        await self._handle_vote(interaction, -1)
 
 
 class CustomEmbedModal(discord.ui.Modal, title="Tạo Custom Embed"):

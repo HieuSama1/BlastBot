@@ -7,6 +7,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta, timezone
 from utils.embeds import success_embed, error_embed
+from utils.constants import CLEAR_CONFIG, COMMAND_COOLDOWNS
 from .base import BaseModerationCog, validate_amount
 
 
@@ -23,7 +24,7 @@ class ClearCommand(BaseModerationCog):
     @app_commands.describe(amount="Số lượng tin nhắn cần xóa (1-100)")
     @app_commands.guild_only()
     @app_commands.default_permissions(manage_messages=True)
-    @app_commands.checks.cooldown(1, 10.0, key=lambda i: i.user.id)
+    @app_commands.checks.cooldown(1, COMMAND_COOLDOWNS['clear'], key=lambda i: i.user.id)
     async def clear(
         self,
         interaction: discord.Interaction,
@@ -38,7 +39,6 @@ class ClearCommand(BaseModerationCog):
                 return
             
             # Validate amount
-            from utils.constants import CLEAR_CONFIG
             is_valid, error_msg = validate_amount(
                 amount,
                 CLEAR_CONFIG['min_messages'],
@@ -53,9 +53,11 @@ class ClearCommand(BaseModerationCog):
                 await self.send_error(interaction, "Lệnh này chỉ dùng trong text channel!", use_followup=True)
                 return
             
-            # Lấy tin nhắn để xóa
+            # Lấy tin nhắn để xóa, bỏ qua pinned messages
             messages = []
             async for message in interaction.channel.history(limit=amount):
+                if message.pinned:
+                    continue
                 messages.append(message)
             
             if not messages:
@@ -63,7 +65,6 @@ class ClearCommand(BaseModerationCog):
                 return
             
             # Phân loại tin nhắn theo độ tuổi (Discord chỉ cho bulk delete tin nhắn < 14 ngày)
-            from utils.constants import CLEAR_CONFIG
             two_weeks_ago = datetime.now(timezone.utc) - timedelta(days=CLEAR_CONFIG['message_age_limit_days'])
             bulk_delete_messages = [msg for msg in messages if msg.created_at > two_weeks_ago]
             old_messages = [msg for msg in messages if msg.created_at <= two_weeks_ago]
@@ -72,13 +73,15 @@ class ClearCommand(BaseModerationCog):
             
             # Xóa tin nhắn mới theo batch để tránh rate limit
             if bulk_delete_messages:
-                from utils.constants import CLEAR_CONFIG
                 # Xóa từng batch tin nhắn (giới hạn an toàn)
                 batch_size = CLEAR_CONFIG['batch_size']
                 for i in range(0, len(bulk_delete_messages), batch_size):
                     batch = bulk_delete_messages[i:i + batch_size]
                     try:
-                        await interaction.channel.delete_messages(batch)
+                        if len(batch) == 1:
+                            await batch[0].delete()
+                        else:
+                            await interaction.channel.delete_messages(batch)
                         deleted_count += len(batch)
                         # Delay giữa các batch để tránh rate limit
                         if i + batch_size < len(bulk_delete_messages):
@@ -119,8 +122,4 @@ class ClearCommand(BaseModerationCog):
             )
         except Exception as e:
             self.logger.error(f"Error in clear command: {e}", exc_info=True)
-            await self.send_error(interaction, f"Không thể xóa tin nhắn: {str(e)}", use_followup=True)
-
-
-async def setup(bot):
-    await bot.add_cog(ClearCommand(bot))
+            await self.safe_error_response(interaction, "Lỗi", f"Không thể xóa tin nhắn: {str(e)}")

@@ -153,6 +153,15 @@ class Database:
                     FOREIGN KEY (guild_id) REFERENCES guilds(guild_id) ON DELETE CASCADE
                 )
             """)
+
+            await self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS suggestion_votes (
+                    message_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    vote INTEGER NOT NULL,
+                    PRIMARY KEY (message_id, user_id)
+                )
+            """)
             
             await self.conn.commit()
             logger.info("Database tables initialized")
@@ -267,6 +276,58 @@ class Database:
 
         await self.conn.execute("DELETE FROM role_menus WHERE message_id = ?", (message_id,))
         await self.conn.commit()
+
+    async def set_vote(self, message_id: int, user_id: int, vote: int):
+        """Lưu/cập nhật vote (vote = 1 hoặc -1)."""
+        if not self.conn:
+            return
+        await self.conn.execute(
+            """
+            INSERT INTO suggestion_votes (message_id, user_id, vote)
+            VALUES (?, ?, ?)
+            ON CONFLICT(message_id, user_id) DO UPDATE SET vote = excluded.vote
+            """,
+            (message_id, user_id, vote)
+        )
+        await self.conn.commit()
+
+    async def remove_vote(self, message_id: int, user_id: int):
+        """Bỏ vote (khi user bấm lại nút đã chọn)."""
+        if not self.conn:
+            return
+        await self.conn.execute(
+            "DELETE FROM suggestion_votes WHERE message_id = ? AND user_id = ?",
+            (message_id, user_id)
+        )
+        await self.conn.commit()
+
+    async def get_vote_counts(self, message_id: int) -> tuple[int, int]:
+        """Trả về (upvotes, downvotes)."""
+        if not self.conn:
+            return (0, 0)
+        async with self.conn.execute(
+            "SELECT vote, COUNT(*) AS c FROM suggestion_votes WHERE message_id = ? GROUP BY vote",
+            (message_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+        up = down = 0
+        for row in rows:
+            if row['vote'] == 1:
+                up = row['c']
+            elif row['vote'] == -1:
+                down = row['c']
+        return (up, down)
+
+    async def get_user_vote(self, message_id: int, user_id: int) -> Optional[int]:
+        """Trả về vote hiện tại của user (1, -1) hoặc None."""
+        if not self.conn:
+            return None
+        async with self.conn.execute(
+            "SELECT vote FROM suggestion_votes WHERE message_id = ? AND user_id = ?",
+            (message_id, user_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row['vote'] if row else None
     
     async def get_guild_config(self, guild_id: int) -> dict:
         """Lấy config của guild (with caching)"""

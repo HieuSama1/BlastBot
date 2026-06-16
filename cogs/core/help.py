@@ -15,23 +15,9 @@ class HelpCommand(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger('BlastBot.Core.Help')
-        # Cache for command categories
-        self._categories_cache: Optional[dict[str, list[app_commands.Command]]] = None
-        self._cache_version = 0
-    
-    def _invalidate_cache(self):
-        """Invalidate command categories cache"""
-        self._categories_cache = None
-        self._cache_version += 1
-        self.logger.debug("Invalidated help command cache")
     
     def _get_command_categories(self) -> dict[str, list[app_commands.Command]]:
-        """Tự động phân loại commands theo cog/module (with caching)"""
-        # Return cached version if available
-        if self._categories_cache is not None:
-            self.logger.debug("Using cached command categories")
-            return self._categories_cache
-        
+        """Tự động phân loại commands theo cog/module."""
         categories = {}
         
         # Get all app commands from tree
@@ -55,10 +41,6 @@ class HelpCommand(commands.Cog):
                     categories[category] = []
                 
                 categories[category].append(command)
-        
-        # Cache the result
-        self._categories_cache = categories
-        self.logger.debug(f"Cached {len(categories)} command categories")
         
         return categories
     
@@ -220,11 +202,13 @@ class HelpCommand(commands.Cog):
         )
         
         # Permissions
-        if hasattr(cmd, '_default_permissions') and cmd.default_permissions:
-            perms = []
-            for perm, value in cmd.default_permissions:
-                if value:
-                    perms.append(perm.replace('_', ' ').title())
+        default_perms = getattr(cmd, 'default_permissions', None)
+        if default_perms:
+            perms = [
+                name.replace('_', ' ').title()
+                for name, value in default_perms
+                if value
+            ]
             
             if perms:
                 embed.add_field(
@@ -238,8 +222,4 @@ class HelpCommand(commands.Cog):
     
     async def cog_unload(self):
         """Cleanup khi cog unload"""
-        self._invalidate_cache()
-
-
-async def setup(bot):
-    await bot.add_cog(HelpCommand(bot))
+        return

@@ -1,11 +1,12 @@
 import discord
 from discord.ext import commands
 import asyncio
-import os
 from dotenv import load_dotenv
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
+
+from utils.config import Config
 
 # Load environment variables
 load_dotenv()
@@ -29,9 +30,11 @@ class BlastBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
+
+        self.logger = logging.getLogger('BlastBot')
         
         super().__init__(
-            command_prefix=os.getenv('BOT_PREFIX', '!'),
+            command_prefix=Config.DEFAULT_PREFIX,
             intents=intents,
             help_command=None  # Disable default help command
         )
@@ -45,38 +48,6 @@ class BlastBot(commands.Bot):
         # Shared database connection
         self.db = None
         self._persistent_views_registered = False
-    
-    def _discover_extensions(self) -> list[str]:
-        """Tự động tìm và load tất cả cog modules"""
-        extensions = []
-        cogs_path = Path(__file__).parent / 'cogs'
-        
-        if not cogs_path.exists():
-            logger.warning("Thư mục cogs không tồn tại!")
-            return extensions
-        
-        # Scan thư mục cogs
-        for item in cogs_path.iterdir():
-            # Bỏ qua __pycache__ và hidden files
-            if item.name.startswith('_') or item.name.startswith('.'):
-                continue
-            
-            # Nếu là thư mục và có __init__.py -> là module
-            if item.is_dir():
-                init_file = item / '__init__.py'
-                if init_file.exists():
-                    module_name = f'cogs.{item.name}'
-                    extensions.append(module_name)
-                    logger.debug(f"Tìm thấy module: {module_name}")
-            
-            # Nếu là file .py (không phải __init__.py) -> là single cog
-            elif item.is_file() and item.suffix == '.py' and item.stem != '__init__':
-                module_name = f'cogs.{item.stem}'
-                extensions.append(module_name)
-                logger.debug(f"Tìm thấy cog: {module_name}")
-        
-        logger.info(f"Đã phát hiện {len(extensions)} extensions: {', '.join(extensions)}")
-        return extensions
     
     async def setup_hook(self):
         """Called when the bot is starting up"""
@@ -98,18 +69,54 @@ class BlastBot(commands.Bot):
                 logger.error(f"❌ Không thể tải {ext}: {e}")
 
         # Sync commands (global hoặc guild-specific cho testing)
-        guild_id = os.getenv('GUILD_ID')
-        if guild_id:
-            # Sync to specific guild for faster testing
-            guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
-            
-            synced = await self.tree.sync(guild=guild)
-            logger.info(f"Đã sync {len(synced)} commands cho guild {guild_id}")
+        guild_id = Config.GUILD_ID
+        if guild_id and guild_id.strip():
+            try:
+                gid = int(guild_id.strip())
+            except ValueError:
+                logger.error(f"GUILD_ID không hợp lệ ('{guild_id}'), sẽ sync global.")
+                gid = None
+
+            if gid:
+                guild = discord.Object(id=gid)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info(f"Đã sync {len(synced)} commands cho guild {gid}")
+            else:
+                synced = await self.tree.sync()
+                logger.info(f"Đã sync {len(synced)} commands globally")
         else:
-            # Sync globally (có thể mất ~1 giờ để update)
             synced = await self.tree.sync()
             logger.info(f"Đã sync {len(synced)} commands globally")
+
+    def _discover_modules(self, base_path: Path, package: str) -> list[str]:
+        modules = []
+        if not base_path.exists():
+            return modules
+
+        for item in base_path.iterdir():
+            if item.name.startswith('_') or item.name.startswith('.'):
+                continue
+
+            if item.is_dir():
+                init_file = item / '__init__.py'
+                if init_file.exists():
+                    modules.append(f'{package}.{item.name}')
+            elif item.is_file() and item.suffix == '.py' and item.stem != '__init__':
+                modules.append(f'{package}.{item.stem}')
+
+        return modules
+
+    def _discover_extensions(self) -> list[str]:
+        """Tự động tìm và load tất cả extension modules."""
+        extensions = []
+        base_path = Path(__file__).parent
+
+        extensions.extend(self._discover_modules(base_path / 'cogs', 'cogs'))
+        extensions.extend(self._discover_modules(base_path / 'events', 'events'))
+
+        logger.info(f"Đã phát hiện {len(extensions)} extensions: {', '.join(extensions)}")
+        return extensions
 
     async def _register_persistent_views(self):
         """Đăng ký lại các persistent role menu views đã lưu trong DB."""
@@ -160,6 +167,9 @@ class BlastBot(commands.Bot):
                 self.add_view(view, message_id=menu['message_id'])
                 registered += 1
 
+            from utils.modals import SuggestionVotingView
+            self.add_view(SuggestionVotingView())
+
             self._persistent_views_registered = True
             logger.info(f"Đã đăng ký lại {registered} persistent role menu views")
         except Exception as e:
@@ -200,12 +210,6 @@ class BlastBot(commands.Bot):
         await super().close()
         logger.info("✅ Bot đã tắt hoàn toàn")
     
-    async def on_command_error(self, ctx, error):
-        """Global error handler for prefix commands"""
-        if isinstance(error, commands.CommandNotFound):
-            return
-        logger.error(f"Command error: {error}")
-    
     async def on_app_command_error(
         self,
         interaction: discord.Interaction,
@@ -237,7 +241,7 @@ class BlastBot(commands.Bot):
 async def main():
     """Main entry point"""
     # Check for token
-    token = os.getenv('DISCORD_TOKEN')
+    token = Config.TOKEN
     if not token:
         logger.error("❌ Không tìm thấy DISCORD_TOKEN trong file .env!")
         logger.error("Vui lòng tạo file .env và thêm token của bạn.")

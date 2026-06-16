@@ -6,6 +6,7 @@ from discord.ext import commands
 import logging
 from utils.embeds import success_embed, error_embed, warning_embed
 from utils.views import ConfirmView
+from utils.constants import COMMAND_COOLDOWNS
 from .base import BaseModerationCog, validate_amount
 
 
@@ -49,7 +50,7 @@ class BanCommand(BaseModerationCog):
     @app_commands.autocomplete(reason=ban_reason_autocomplete)
     @app_commands.guild_only()
     @app_commands.default_permissions(ban_members=True)
-    @app_commands.checks.cooldown(1, 15.0, key=lambda i: i.user.id)
+    @app_commands.checks.cooldown(1, COMMAND_COOLDOWNS['ban'], key=lambda i: i.user.id)
     async def ban(
         self,
         interaction: discord.Interaction,
@@ -107,7 +108,7 @@ class BanCommand(BaseModerationCog):
             # Thực hiện ban
             await member.ban(
                 reason=f"{interaction.user}: {reason}",
-                delete_message_days=delete_messages
+                delete_message_seconds=delete_messages * 86400
             )
             
             self.logger.info(f"{interaction.user} banned {member} - Reason: {reason}")
@@ -132,11 +133,4 @@ class BanCommand(BaseModerationCog):
             )
         except Exception as e:
             self.logger.error(f"Error in ban command: {e}", exc_info=True)
-            await interaction.edit_original_response(
-                embed=error_embed("Lỗi", f"Không thể ban: {str(e)}"),
-                view=None
-            )
-
-
-async def setup(bot):
-    await bot.add_cog(BanCommand(bot))
+            await self.safe_error_response(interaction, "Lỗi", f"Không thể ban: {str(e)}")

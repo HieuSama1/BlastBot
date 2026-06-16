@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import traceback
+import logging
 
 class ErrorHandler(commands.Cog):
     """A Cog that handles various command execution errors in the Discord bot.
@@ -23,6 +24,7 @@ class ErrorHandler(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.logger = logging.getLogger('BlastBot.ErrorHandler')
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: Exception):
@@ -78,8 +80,8 @@ class ErrorHandler(commands.Cog):
             return
 
         # Log lỗi không xác định
-        self.bot.logger.error(f"Lỗi trong lệnh {ctx.command}:")
-        self.bot.logger.error(f"".join(traceback.format_exception(type(error), error, error.__traceback__)))
+        self.logger.error(f"Lỗi trong lệnh {ctx.command}:")
+        self.logger.error("".join(traceback.format_exception(type(error), error, error.__traceback__)))
 
 async def setup(bot):
     await bot.add_cog(ErrorHandler(bot))
